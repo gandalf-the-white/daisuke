@@ -1,10 +1,10 @@
 #+title: Template
 
 * Introduction
-I propose to explain how to build a common template on /Proxmox/. Actually, two templates must be define, the first for /Kubernetes/ architecture and finally the last for different virtual machines which don't support /KxS/.
+I propose to explain how to build a common template on /Proxmox/. Actually, two templates must be define, the first for /Linux/ architecture and finally the last more exotic.
 
 * Ubuntu
-This one will be used for /KxS/ and will be build with a simple script based on *qm*.
+This one will be used for common basic application such as /KxS/ and will be build with a simple script based on *qm*.
 ** Initialize
 We take example on a Ubuntu 24.04
 #+begin_src emacs-lisp
