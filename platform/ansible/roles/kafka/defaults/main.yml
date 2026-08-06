@@ -1,0 +1,55 @@
+#SPDX-License-Identifier: MIT-0
+---
+# defaults file for ansible/roles/kafka
+packages:
+  - bastille
+  - tree
+  - pftop
+
+ext_if: eth0
+bastille_interface: bastille0
+bastille_release: "15.0-RELEASE"
+
+jails:
+  - name: kafka-server
+    octet: "220"
+    prefix: "10.17.89"
+    subnet: "10.17.89.0/24"
+    packages:
+      - htop
+      - tree
+      - kafka
+    daemons:
+      - kafka
+    services:
+      - kafka
+    ports:
+      - port: 9092
+        proto: tcp
+    accounts:
+      - name: spike
+        uid: 1010
+        gid: 1010
+    new_groups:
+      - name: spike
+        gid: 1010
+
+    # kafka_package: kafka
+    # kafka_service: kafka
+
+kafka_user: kafka
+kafka_group: kafka
+
+kafka_home:
+  /usr/local/share/java/kafka
+  # kafka_config_dir: /usr/local/etc/kafka
+kafka_config_file: /usr/local/etc/kafka/server.properties
+kafka_data_dir: /var/db/kafka
+kafka_meta_file: /var/db/kafka/meta.properties
+kafka_cluster_id_file:
+  /var/db/kafka-cluster-id
+
+  # kafka_node_id: 1
+  # kafka_broker_address: "10.17.89.220"
+kafka_broker_port: 9092
+kafka_controller_port: 9093

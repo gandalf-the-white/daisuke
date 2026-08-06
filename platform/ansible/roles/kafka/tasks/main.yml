@@ -1,0 +1,354 @@
+#SPDX-License-Identifier: MIT-0
+---
+# tasks file for ansible/roles/kafka
+
+- name: Bastille installation
+  tags: bastille
+  block:
+    - name: Add lines proxy
+      ansible.builtin.blockinfile:
+        path: /usr/local/etc/pkg.conf
+        marker: ";; {mark} ANSIBLE MANAGED PKG"
+        block: |
+          PKG_ENV {
+              http_proxy: {{ http_proxy }},
+              https_proxy: {{ http_proxy }},
+          }
+
+    - name: Set runtime hostname
+      ansible.builtin.hostname:
+        name: "{{ hostname }}"
+
+    - name: Persist hostname in rc.conf
+      community.general.sysrc:
+        name: hostname
+        value: "{{ hostname }}"
+
+    - name: Install host packages
+      community.general.pkgng:
+        name: "{{ packages }}"
+        state: present
+
+    - name: Enable bastille at boot
+      community.general.sysrc:
+        name: bastille_enable
+        value: "YES"
+
+    - name: Configure Bastille loopback clone
+      community.general.sysrc:
+        name: cloned_interfaces
+        value: lo1
+
+    - name: Rename lo1 to bastille0
+      community.general.sysrc:
+        name: ifconfig_lo1_name
+        value: "{{ bastille_interface }}"
+
+    - name: Bring cloned interfaces up
+      ansible.builtin.command: service netif cloneup
+      changed_when: false
+
+    - name: Bootstrap Bastille release
+      ansible.builtin.command: "bastille bootstrap {{ bastille_release }}"
+      args:
+        creates: "/usr/local/bastille/releases/{{ bastille_release }}"
+
+######################################
+# PF CONFIGURATION
+######################################
+
+- name: PF configuration
+  tags: pf
+  block:
+    - name: Deploy pf.conf
+      ansible.builtin.template:
+        src: pf.conf.j2
+        dest: /etc/pf.conf
+        owner: root
+        group: wheel
+        mode: "0644"
+      # notify: reload pf
+
+    - name: Check if pf kernel module is loaded
+      ansible.builtin.command: kldstat -n pf
+      register: pf_loaded
+      failed_when: false
+      changed_when: false
+
+    - name: Load pf kernel module
+      ansible.builtin.command: kldload pf
+      when: pf_loaded.rc != 0
+
+    - name: Enable pf at boot
+      community.general.sysrc:
+        name: pf_enable
+        value: "YES"
+
+    - name: Validate pf.conf
+      ansible.builtin.command: pfctl -vnf /etc/pf.conf
+      changed_when: false
+
+    - name: Ensure pf is running
+      ansible.builtin.service:
+        name: pf
+        state: started
+
+###################################################
+# CREATE JAILS
+###################################################
+
+- name: Jails management
+  tags: jails
+  block:
+    - name: Create jails
+      ansible.builtin.command: >-
+        bastille create {{ item.name }} {{ bastille_release }}
+        {{ item.prefix }}.{{ item.octet }} {{ bastille_interface }}
+      loop: "{{ jails }}"
+      args:
+        creates: "/usr/local/bastille/jails/{{ item.name }}"
+
+    - name: Copy host resolv.conf into jails
+      ansible.builtin.copy:
+        src: /etc/resolv.conf
+        dest: "/usr/local/bastille/jails/{{ item.name }}/root/etc/resolv.conf"
+        remote_src: true
+        owner: root
+        group: wheel
+        mode: "0644"
+      loop: "{{ jails }}"
+
+    - name: Configure jail pkg proxy
+      ansible.builtin.blockinfile:
+        path: "/usr/local/bastille/jails/{{ item.name }}/root/usr/local/etc/pkg.conf"
+        create: true
+        marker: "# {mark} ANSIBLE MANAGED PKG PROXY"
+        block: |
+          PKG_ENV: {
+            HTTP_PROXY  : "{{ http_proxy | default('') }}"
+            HTTPS_PROXY : "{{ https_proxy | default('') }}"
+          }
+      loop: "{{ jails }}"
+      when: http_proxy is defined or https_proxy is defined
+
+    - name: Ensure jail pkg configuration directory exists
+      ansible.builtin.file:
+        path: "/usr/local/bastille/jails/{{ item.name }}/root/usr/local/etc"
+        state: directory
+        owner: root
+        group: wheel
+        mode: "0755"
+      loop: "{{ jails }}"
+
+    - name: Update pkg catalog in jails
+      ansible.builtin.command: "bastille cmd {{ item.name }} env ASSUME_ALWAYS_YES=yes pkg update"
+      loop: "{{ jails }}"
+      # changed_when: false
+      changed_when: "'No updates' not in jail_pkg_update.stdout"
+      register: jail_pkg_update
+      failed_when: jail_pkg_update.rc != 0
+
+######################################
+# DAEMON CONFIGURATION
+######################################
+
+- name: Daemon configuration
+  tags: daemon
+  block:
+    - name: Install packages in jails
+      ansible.builtin.command: "bastille pkg {{ item.0.name }} install -y {{ item.1 }}"
+      loop: "{{ jails | subelements('packages', skip_missing=True) }}"
+      register: jail_pkg_install
+      changed_when: "'already installed' not in jail_pkg_install.stdout"
+
+    - name: Enable daemons in jails
+      ansible.builtin.command: "bastille sysrc {{ item.0.name }} {{ item.1 }}_enable=YES"
+      loop: "{{ jails | subelements('daemons', skip_missing=True) }}"
+
+######################################
+# KAFKA CONFIGURATION
+######################################
+
+- name: Kafka Configuration
+  block:
+    - name: Select Kafaka jail
+      ansible.builtin.set_fact:
+        kafka_jail: "{{ jails | selectattr('name', 'equalto', 'kafka-server') | first }}"
+      tags: bast
+
+    - name: Check if KRaft is already used
+      ansible.builtin.stat:
+        path: "/usr/local/bastille/jails/{{ kafka_jail.name }}/root{{ kafka_meta_file }}"
+      register: kafka_meta_properties
+      tags: bast
+
+    - name: Stop Kafka before KRaft initialisation
+      ansible.builtin.service:
+        name: "{{ kafka_jail.name }}"
+        state: stopped
+      when: not kafka_meta_properties.stat.exists
+      failed_when: false
+      tags: bast
+
+    - name: Create Kafka Cluster ID
+      ansible.builtin.command:
+        argv:
+          - "bastille"
+          - "cmd"
+          - "{{ kafka_jail.name }}"
+          - "{{ kafka_home }}/bin/kafka-storage.sh"
+          - random-uuid
+      register: kafka_generated_cluster_id
+      changed_when: true
+      when: not kafka_meta_properties.stat.exists
+      tags: bast
+
+    - name: Check if cluster ID exist
+      ansible.builtin.assert:
+        that:
+          - kafka_generated_cluster_id.stdout | trim | length > 0
+        fail_msg: "Kafka cluster ID unabled."
+      when: not kafka_meta_properties.stat.exists
+      tags: bast
+
+    - name: Register Cluster ID
+      ansible.builtin.copy:
+        dest: "/usr/local/bastille/jails/{{ kafka_jail.name }}/root{{ kafka_cluster_id_file }}"
+        content: "{{ kafka_generated_cluster_id.stdout | trim }}\n"
+        owner: root
+        group: wheel
+        mode: "0600"
+      when: not kafka_meta_properties.stat.exists
+      tags: bast
+
+    - name: Initialise the storage KRaft
+      # become_user: "{{ kafka_user }}"
+      ansible.builtin.command:
+        argv:
+          - "/usr/sbin/jexec"
+          - -U
+          - "{{ kafka_user }}"
+          - "{{ kafka_jail.name }}"
+          - "{{ kafka_home }}/bin/kafka-storage.sh"
+          - format
+          - --cluster-id
+          - "{{ kafka_generated_cluster_id.stdout | trim }}"
+          - --standalone
+          - --config
+          - "{{ kafka_config_file }}"
+        creates: "/usr/local/bastille/jails/{{ kafka_jail.name }}/root{{ kafka_meta_file }}"
+      when: not kafka_meta_properties.stat.exists
+      register: kafka_storage_format
+      tags: bast
+
+    - name: Récupérer l'UID de Kafka dans le jail
+      become: true
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/jexec
+          - "{{ kafka_jail.name }}"
+          - /usr/bin/id
+          - -u
+          - "{{ kafka_user }}"
+      register: kafka_uid_result
+      changed_when: false
+
+    - name: Récupérer le GID de Kafka dans le jail
+      become: true
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/jexec
+          - "{{ kafka_jail.name }}"
+          - /usr/bin/id
+          - -g
+          - "{{ kafka_user }}"
+      register: kafka_gid_result
+      changed_when: false
+
+    - name: Modify the data directory permission
+      ansible.builtin.file:
+        path: "/usr/local/bastille/jails/{{ kafka_jail.name }}/root{{ kafka_data_dir }}"
+        state: directory
+        owner: "{{ kafka_uid_result.stdout | trim }}"
+        group: "{{ kafka_gid_result.stdout | trim }}"
+        mode: "0750"
+        recurse: true
+      when: kafka_storage_format is changed
+
+    - name: Start kafka service
+      ansible.builtin.command: "bastille service {{ kafka_jail.name }} kafka start"
+
+    - name: Start kafka service
+      ansible.builtin.command: "bastille service {{ kafka_jail.name }} kafka restart"
+      when:
+        - kafka_meta_properties.stat.exists
+
+    - name: Validate PF configuration
+      become: true
+      ansible.builtin.command:
+        argv:
+          - /sbin/pfctl
+          - -nf
+          - /etc/pf.conf
+      changed_when: false
+
+    - name: Reload PF configuration
+      become: true
+      ansible.builtin.command:
+        argv:
+          - /sbin/pfctl
+          - -f
+          - /etc/pf.conf
+      changed_when: true
+
+    - name: Reset the SSH persistent connection
+      ansible.builtin.meta: reset_connection
+
+    - name: Wait until the FreeBSD host is reachable again
+      ansible.builtin.wait_for_connection:
+        delay: 1
+        sleep: 2
+        connect_timeout: 5
+        timeout: 60
+
+    - name: Waiting for broker port
+      ansible.builtin.wait_for:
+        host: "{{ kafka_jail.prefix }}.{{ kafka_jail.octet }}"
+        port: "{{ kafka_broker_port }}"
+        state: started
+        timeout: 60
+        delay: 2
+
+    - name: Waiting for controller port
+      ansible.builtin.wait_for:
+        host: "{{ kafka_jail.prefix }}.{{ kafka_jail.octet }}"
+        port: "{{ kafka_controller_port }}"
+        state: started
+        timeout: 60
+        delay: 2
+
+    - name: Check KRaft quorum
+      ansible.builtin.command:
+        argv:
+          - "bastille"
+          - "cmd"
+          - "{{ kafka_jail.name }}"
+          - "{{ kafka_home }}/bin/kafka-metadata-quorum.sh"
+          - --bootstrap-server
+          - "{{ kafka_jail.prefix }}.{{ kafka_jail.octet }}:{{ kafka_broker_port }}"
+          - describe
+          - --status
+      register: kafka_quorum_status
+      changed_when: false
+      retries: 5
+      delay: 5
+      until: kafka_quorum_status.rc == 0
+
+    - name: Afficher l'état du quorum
+      ansible.builtin.debug:
+        var: kafka_quorum_status.stdout_lines
+
+    - name: Restart pf
+      shell:
+        cmd: >
+          (( sleep 5; nohup service pf restart 1>/dev/null 2>&1 ) & )
