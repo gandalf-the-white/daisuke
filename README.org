@@ -1,1 +1,43 @@
 #+title: Readme
+
+* Proxmox
+** Terraform Prerequisite
+The build script requires global environment variables.
++ TF_VAR_publkeyctn: public key installed on the VMs
++ TF_VAR_privkeyctn: private key for accessing the VMs
++ TF_VAR_token: The token required to access Proxmox
++ TF_VAR_token_id: The ID required to access Proxmox
++ TF_VAR_fqdn_pmox: The Proxmox server address
+** Template
+I use two types of template in Proxmox to set up my virtual machines.
+The first is for the Kubernetes cluster (i.e. the masters and workers). This template is based on a standard Debian (v13) installation.
+The second template is for the storage virtual machines and the HLS server. This image is based on a FreeBSD (v15) installation adapted for jails.
+Three services are launched automatically:
++ qemu_guest_agent
++ cloudinit
++ openssh
++ pf
++ pflog
+To speed up the boot process, I enable
+#+begin_src shell
+$ sysrc -f /boot/loader.conf autoboot_delay=-1
+#+end_src
+Read this [[./TEMPLATE.org][readme]] for more information
+** Pf configuration
+#+begin_src yaml
+ext_if="eth0"
+
+set block-policy return
+scrub in on $ext_if all fragment reassemble
+set skip on lo
+
+table <jails> persist
+nat on $ext_if from <jails> to any -> ($ext_if:0)
+rdr-anchor "rdr/*"
+
+block in all
+pass out quick keep state
+antispoof for $ext_if inet
+pass in inet proto tcp from any to any port ssh flags S/SA keep state
+#+end_src
+Just based on bastille pf configuration
