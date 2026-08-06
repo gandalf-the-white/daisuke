@@ -20,7 +20,7 @@ resource "proxmox_vm_qemu" "server" {
     sockets = var.server["server"].sockets
   }
 
-  tags = "Bsd;Kafka"
+  tags = "Bsd;Ldes"
 
   cicustom = "user=${var.cloudinit}:snippets/cloudinitbsd.yaml"
 
@@ -76,7 +76,7 @@ resource "local_file" "inventory" {
       privkeyctn = var.privkeyctn
   name = var.server["server"].name })
 
-  filename        = "./ansible/inventory-kafka.yaml"
+  filename        = "./ansible/inventory-ldes.yaml"
   file_permission = "0644"
 }
 
@@ -90,13 +90,13 @@ resource "local_file" "playbook" {
       proxy    = var.proxy
       noproxy  = "${var.prefix}.0/24"
   })
-  filename        = "./ansible/playbook-kafka.yaml"
+  filename        = "./ansible/playbook-ldes.yaml"
   file_permission = "0644"
 }
 
 resource "null_resource" "play_ansible" {
   provisioner "local-exec" {
-    command = "ansible-playbook -i ansible/inventory-kafka.yaml ansible/playbook-kafka.yaml"
+    command = "ansible-playbook -i ansible/inventory-ldes.yaml ansible/playbook-ldes.yaml"
   }
   depends_on = [
     proxmox_vm_qemu.server,
@@ -109,7 +109,7 @@ resource "null_resource" "play_ansible" {
 ##  OUTPUT
 ####################################################################################
 
-output "kafka_server_ip_address" {
-  description = "KAFKA IP Address"
+output "ldes_server_ip_address" {
+  description = "LDES IP Address"
   value       = proxmox_vm_qemu.server.default_ipv4_address
 }

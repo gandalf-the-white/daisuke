@@ -1,0 +1,17 @@
+variable "server" {}
+variable "prefix" {}
+variable "userctn" {}
+variable "publkeyctn" {}
+variable "privkeyctn" {}
+variable "vlan" {}
+variable "target_node" {}
+variable "size" {}
+variable "clone" {}
+variable "storage" {}
+variable "bridge" {}
+variable "nameserver" {}
+variable "cloudinit" {}
+variable "proxy" {}
+variable "noproxy" {}
+
+variable "adminip" {}

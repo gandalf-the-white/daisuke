@@ -38,3 +38,21 @@ variable "kafka" {
   }
 }
 
+variable "ldes" {
+  type = map(object({
+    name    = string
+    octet   = number
+    memory  = number
+    cores   = number
+    sockets = number
+  }))
+  default = {
+    server = {
+      name    = "ldes"
+      octet   = 102
+      memory  = 4096
+      cores   = 2
+      sockets = 1
+    }
+  }
+}

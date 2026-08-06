@@ -1,5 +1,5 @@
 ---
-- name: install KAFKA
+- name: install LDES
   hosts: all
   become: true
 
@@ -18,4 +18,5 @@
     no_proxy: "${noproxy}"
 
   roles:
-    - kafka
+    - postgres
+    - ldes
