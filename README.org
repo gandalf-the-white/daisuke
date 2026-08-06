@@ -10,8 +10,8 @@ The build script requires global environment variables.
 + TF_VAR_fqdn_pmox: The Proxmox server address
 ** Template
 I use two types of template in Proxmox to set up my virtual machines.
-The first is for the Kubernetes cluster (i.e. the masters and workers). This template is based on a standard Debian (v13) installation.
-The second template is for the storage virtual machines and the HLS server. This image is based on a FreeBSD (v15) installation adapted for jails.
+The first is just based on a standard Debian (v13) installation.
+The second template is based on a FreeBSD (v15) installation adapted for jails.
 Three services are launched automatically:
 + qemu_guest_agent
 + cloudinit
