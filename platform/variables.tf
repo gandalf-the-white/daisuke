@@ -38,6 +38,25 @@ variable "kafka" {
   }
 }
 
+variable "postgres" {
+  type = map(object({
+    name    = string
+    octet   = number
+    memory  = number
+    cores   = number
+    sockets = number
+  }))
+  default = {
+    server = {
+      name    = "postgres"
+      octet   = 102
+      memory  = 4096
+      cores   = 2
+      sockets = 1
+    }
+  }
+}
+
 variable "ldes" {
   type = map(object({
     name    = string
@@ -49,7 +68,7 @@ variable "ldes" {
   default = {
     server = {
       name    = "ldes"
-      octet   = 102
+      octet   = 103
       memory  = 4096
       cores   = 2
       sockets = 1

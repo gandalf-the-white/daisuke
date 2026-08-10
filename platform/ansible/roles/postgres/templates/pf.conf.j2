@@ -1,0 +1,39 @@
+ext_if = "{{ ext_if }}"
+jail_if = "bastille0"
+ssh_port = 22
+admin_ip = {{ admin_ip }}
+
+set block-policy return
+set skip on lo
+# set skip on lo1
+
+scrub in on $ext_if all fragment reassemble
+
+
+table <jails> persist {
+{% for jail in jails %}
+  {{ jail.prefix }}.{{ jail.octet }}{% if not loop.last %},{% endif %}
+{% endfor %}
+ }
+
+nat on $ext_if from <jails> to any -> ($ext_if:0)
+
+{% for jail in jails %}
+{% for p in jail.ports | default([]) %}
+rdr pass on $ext_if proto {{ p.proto }} from any to ($ext_if) port {{ p.port }} -> {{ jail.prefix }}.{{ jail.octet }} port {{ p.port }}
+{% endfor %}
+{% endfor %}
+
+block in all
+
+pass out keep state
+
+# SSH admin uniquement
+pass in quick on $ext_if inet proto tcp \
+    from $admin_ip to ($ext_if) port $ssh_port \
+    flags S/SA keep state
+
+
+
+# Trafic sortant des jails
+pass in quick on $jail_if from <jails> to any keep state
