@@ -69,6 +69,7 @@ module "ldes" {
   publkeyctn  = var.publkeyctn
   privkeyctn  = var.privkeyctn
   adminip     = var.adminip
+  depends_on  = [module.postgres]
 }
 
 ####################################################################################
