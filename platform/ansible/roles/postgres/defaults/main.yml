@@ -33,3 +33,9 @@ jails:
     new_groups:
       - name: spike
         gid: 1010
+
+postgres_database: ldes
+postgres_user: ldes
+
+postgres_admin_password: "CHANGE_ME"
+postgres_user_password: "CHANGE_ME"

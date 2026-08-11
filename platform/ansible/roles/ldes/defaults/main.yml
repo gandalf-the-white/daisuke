@@ -1,3 +1,114 @@
 #SPDX-License-Identifier: MIT-0
 ---
 # defaults file for ansible/roles/ldes
+packages:
+  - bastille
+  - tree
+  - pftop
+  - jq
+  - curl
+
+#######################################
+# Bastille jails
+#######################################
+
+ext_if: eth0
+bastille_interface: bastille0
+bastille_release: "15.0-RELEASE"
+
+jails:
+  - name: ldes-server
+    octet: "220"
+    prefix: "10.17.89"
+    subnet: "10.17.89.0/24"
+    packages:
+      - htop
+      - tree
+      - maven
+      - openjdk21
+      - curl
+      - git
+    daemons:
+      - ldes
+    services:
+      - ldes
+    ports:
+      - name: ingest
+        port: 8080
+        proto: tcp
+      - name: fetch
+        port: 8080
+        proto: tcp
+      - name: admin
+        port: 8080
+        proto: tcp
+    accounts:
+      - name: spike
+        uid: 1010
+        gid: 1010
+      - name: ldes
+        uid: 1011
+        gid: 1011
+    new_groups:
+      - name: spike
+        gid: 1010
+      - name: ldes
+        gid: 1011
+
+#######################################
+# LDES
+#######################################
+
+# ldes_jail_name: "ldes-server"
+
+ldes_user: "ldes"
+ldes_group: "ldes"
+
+ldes_install_dir: "/usr/local/ldes"
+ldes_config_dir: "/usr/local/etc/ldes"
+ldes_data_dir: "/var/db/ldes"
+ldes_source_dir: "/usr/local/src/LDESServer"
+
+ldes_port: 8080
+
+# Toujours figer une version/tag/commit en production.
+# À adapter au tag OpenLDES que tu souhaites déployer.
+ldes_git_repository: "https://github.com/OpenLDES/LDESServer.git"
+ldes_git_ref: "v4.1.1"
+
+ldes_jar: "{{ ldes_install_dir }}/ldes-server.jar"
+
+#######################################
+# JVM
+#######################################
+
+ldes_java: "/usr/local/openjdk21/bin/java"
+
+ldes_java_xms: "512m"
+ldes_java_xmx: "2g"
+
+ldes_java_opts: >-
+  -Xms{{ ldes_java_xms }}
+  -Xmx{{ ldes_java_xmx }}
+  -XX:+UseG1GC
+
+#######################################
+# PostgreSQL
+#######################################
+
+# Exemple : adresse joignable du jail PostgreSQL
+ldes_postgresql_host: "{{ postgres }}"
+ldes_postgresql_port: 5432
+
+ldes_postgresql_database: "ldes"
+ldes_postgresql_user: "ldes"
+
+# À SURCHARGER avec Ansible Vault !
+ldes_postgresql_password: "CHANGE_ME"
+
+#######################################
+# LDES public hostname
+#######################################
+
+# À adapter lorsque tu auras un reverse proxy / DNS.
+ldes_public_url: "http://{{ postgres }}:{{ ldes_port }}"

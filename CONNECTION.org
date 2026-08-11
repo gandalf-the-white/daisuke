@@ -1,0 +1,81 @@
+#+title: Connection
+
+* Introduction
+This chapter explains the different interaction in the plateform. All instances are located in separate jails including in different virtual machines.
+
+* PostgreSQL
+** Inside the jail
+#+begin_src shell
+$ bastille cmd postgres-server sockstat -4 -l
+USER     COMMAND      PID FD PROTO LOCAL ADDRESS         FOREIGN ADDRESS
+postgres postgres   11061  6 tcp4  10.17.89.220:5432     *:*
+#+end_src
+
+** Outside the jail
+#+begin_src shell
+nc -vz 192.188.200.102 5432
+192.188.200.102 5432 (postgresql) open
+#+end_src
+
+** From outside
+We suppose a right permission from the client in /pg_hba.conf/
+#+begin_src shell
+PGPASSWORD='CHANGE_ME' \
+psql -h 192.188.200.102 -p 5432 -U ldes -d ldes
+psql (18.4, server 17.10)
+Type "help" for help.
+
+ldes=>
+#+end_src
+
+** Inside the PostgreSQL instance
+#+begin_src shell
+su - postgres -c \
+>   "psql -tAc \"SELECT rolpassword FROM pg_authid WHERE rolname='ldes';\""
+SCRAM-SHA-256$4096:lIUNylrbEEleFYoJNCuAwQ==$bfhLn0dRqCbEkKVUuvE9c0Tlg.......
+#+end_src
+#+begin_src shell
+su - postgres -c \
+>   "psql -tAc \"SELECT rolname, rolcanlogin, rolpassword IS NOT NULL FROM pg_authid WHERE rolname='ldes';\""
+ldes|t|t
+#+end_src
+
+* LDES Server
+** From host
+#+begin_src shell
+bastille cmd ldes-server service ldes status
+
+[ldes-server]:
+ldes is running as pid 13035.
+#+end_src
+#+begin_src shell
+bastille cmd ldes-server ps auxww | grep '[j]ava'
+
+[ldes-server]:
+ldes 13034  0.0  0.0   14184   2812  -  IsJ  19:54   0:00.00 daemon: /usr/local/openjdk21/bin/java[13035] (daemon)
+ldes 13035  0.0  8.1 4040520 677280  -  IJ   19:54   1:04.42 /usr/local/openjdk21/bin/java -Xms512m -Xmx2g -XX:+UseG1GC -Dspring.config.location=/usr/local/etc/ldes/application.yml -jar /usr/local/ldes/ldes-server.jar
+#+end_src
+#+begin_src shell
+bastille cmd ldes-server tail -50 /var/log/ldes.log
+#+end_src
+** TCP Listening
+#+begin_src shell
+bastille cmd ldes-server sockstat -4 -l | grep 8080
+
+[ldes-server]:
+ldes java       13035 22 tcp4  10.17.89.220:8080     *:*
+#+end_src
+#+begin_src shell
+nc -vz 10.17.89.220 8080
+Connection to 10.17.89.220 8080 port [tcp/http-alt] succeeded!
+#+end_src
+#+begin_src shell
+fetch -qo - http://10.17.89.220:8080/actuator/health
+{"status":"UP"}
+#+end_src
+** Postgres from LDES
+#+begin_src shell
+curl -s http://10.17.89.220:8080/v3/api-docs \
+    | jq '.paths | keys'
+[]
+#+end_src

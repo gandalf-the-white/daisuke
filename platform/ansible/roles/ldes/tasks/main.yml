@@ -1,3 +1,629 @@
 #SPDX-License-Identifier: MIT-0
 ---
 # tasks file for ansible/roles/ldes
+
+###################################################
+# ACCOUNTS
+###################################################
+
+- name: Account
+  block:
+    - name: Check existing groups by GID
+      ansible.builtin.command:
+        cmd: "getent group {{ item.1.gid }}"
+      loop: "{{ jails | subelements('new_groups', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }} -> gid {{ item.1.gid }}"
+      register: group_gid_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create required groups
+      ansible.builtin.group:
+        name: "{{ item.1.name }}"
+        gid: "{{ item.1.gid }}"
+        state: present
+      loop: "{{ jails | subelements('new_groups', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }} -> group {{ item.1.name }}"
+
+    - name: Create required accounts
+      ansible.builtin.user:
+        name: "{{ item.1.name }}"
+        uid: "{{ item.1.uid }}"
+        group: "{{ item.1.name }}"
+        state: present
+        create_home: true
+      loop: "{{ jails | subelements('accounts', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }} -> user {{ item.1.name }}"
+
+###################################################
+# BASTILLE
+###################################################
+
+- name: Bastille installation
+  tags: bastille
+  block:
+    - name: Add lines proxy
+      ansible.builtin.blockinfile:
+        path: /usr/local/etc/pkg.conf
+        marker: ";; {mark} ANSIBLE MANAGED PKG"
+        block: |
+          PKG_ENV {
+              http_proxy: {{ http_proxy }},
+              https_proxy: {{ http_proxy }},
+          }
+
+    - name: Set runtime hostname
+      ansible.builtin.hostname:
+        name: "{{ hostname }}"
+
+    - name: Persist hostname in rc.conf
+      community.general.sysrc:
+        name: hostname
+        value: "{{ hostname }}"
+
+    - name: Install host packages
+      community.general.pkgng:
+        name: "{{ packages }}"
+        state: present
+
+    - name: Enable bastille at boot
+      community.general.sysrc:
+        name: bastille_enable
+        value: "YES"
+
+    - name: Configure Bastille loopback clone
+      community.general.sysrc:
+        name: cloned_interfaces
+        value: lo1
+
+    - name: Rename lo1 to bastille0
+      community.general.sysrc:
+        name: ifconfig_lo1_name
+        value: "{{ bastille_interface }}"
+
+    - name: Bring cloned interfaces up
+      ansible.builtin.command: service netif cloneup
+      changed_when: false
+
+    - name: Bootstrap Bastille release
+      ansible.builtin.command: "bastille bootstrap {{ bastille_release }}"
+      args:
+        creates: "/usr/local/bastille/releases/{{ bastille_release }}"
+
+###################################################
+# CREATE JAILS
+###################################################
+
+- name: Jails management
+  tags: jails
+  block:
+    - name: Create jails
+      ansible.builtin.command: >-
+        bastille create {{ item.name }} {{ bastille_release }}
+        {{ item.prefix }}.{{ item.octet }} {{ bastille_interface }}
+      loop: "{{ jails }}"
+      args:
+        creates: "/usr/local/bastille/jails/{{ item.name }}"
+
+    - name: Copy host resolv.conf into jails
+      ansible.builtin.copy:
+        src: /etc/resolv.conf
+        dest: "/usr/local/bastille/jails/{{ item.name }}/root/etc/resolv.conf"
+        remote_src: true
+        owner: root
+        group: wheel
+        mode: "0644"
+      loop: "{{ jails }}"
+
+    - name: Configure jail pkg proxy
+      ansible.builtin.blockinfile:
+        path: "/usr/local/bastille/jails/{{ item.name }}/root/usr/local/etc/pkg.conf"
+        create: true
+        marker: "# {mark} ANSIBLE MANAGED PKG PROXY"
+        block: |
+          PKG_ENV: {
+            HTTP_PROXY  : "{{ http_proxy | default('') }}"
+            HTTPS_PROXY : "{{ https_proxy | default('') }}"
+          }
+      loop: "{{ jails }}"
+      when: http_proxy is defined or https_proxy is defined
+
+    - name: Ensure jail pkg configuration directory exists
+      ansible.builtin.file:
+        path: "/usr/local/bastille/jails/{{ item.name }}/root/usr/local/etc"
+        state: directory
+        owner: root
+        group: wheel
+        mode: "0755"
+      loop: "{{ jails }}"
+
+    - name: Update pkg catalog in jails
+      ansible.builtin.command: "bastille cmd {{ item.name }} env ASSUME_ALWAYS_YES=yes pkg update"
+      loop: "{{ jails }}"
+      # changed_when: false
+      changed_when: "'No updates' not in jail_pkg_update.stdout"
+      register: jail_pkg_update
+      failed_when: jail_pkg_update.rc != 0
+
+######################################
+# ACCOUNTS JAIL
+######################################
+
+- name: Account Jail
+  block:
+    - name: Select Postgres jail
+      ansible.builtin.set_fact:
+        ldes_jail: "{{ jails | selectattr('name', 'equalto', 'ldes-server') | first }}"
+      tags:
+        - lolo
+
+    - name: Check groups inside jails
+      ansible.builtin.command:
+        argv:
+          - jexec
+          - "{{ item.0.name }}"
+          - pw
+          - groupshow
+          - "{{ item.1.name }}"
+      loop: "{{ jails | subelements('new_groups', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }} -> group {{ item.1.name }}"
+      register: jail_group_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create missing groups inside jails
+      ansible.builtin.command:
+        argv:
+          - jexec
+          - "{{ item.item.0.name }}"
+          - pw
+          - groupadd
+          - "{{ item.item.1.name }}"
+          - -g
+          - "{{ item.item.1.gid | string }}"
+      loop: "{{ jail_group_check.results }}"
+      loop_control:
+        label: "{{ item.item.0.name }} -> group {{ item.item.1.name }}"
+      when: item.rc != 0
+      changed_when: true
+
+    - name: Check users inside jails
+      ansible.builtin.command:
+        argv:
+          - jexec
+          - "{{ item.0.name }}"
+          - pw
+          - usershow
+          - "{{ item.1.name }}"
+      loop: "{{ jails | subelements('accounts', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }} -> user {{ item.1.name }}"
+      register: jail_user_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create missing users inside jails
+      ansible.builtin.command:
+        argv:
+          - jexec
+          - "{{ item.item.0.name }}"
+          - pw
+          - useradd
+          - "{{ item.item.1.name }}"
+          - -u
+          - "{{ item.item.1.uid | string }}"
+          - -g
+          - "{{ item.item.1.name }}"
+          - -m
+      loop: "{{ jail_user_check.results }}"
+      loop_control:
+        label: "{{ item.item.0.name }} -> user {{ item.item.1.name }}"
+      when: item.rc != 0
+      changed_when: true
+
+######################################
+# DAEMON CONFIGURATION
+######################################
+
+- name: Daemon configuration
+  tags: daemon
+  block:
+    - name: Install packages in jails
+      ansible.builtin.command: "bastille pkg {{ item.0.name }} install -y {{ item.1 }}"
+      loop: "{{ jails | subelements('packages', skip_missing=True) }}"
+      register: jail_pkg_install
+      changed_when: "'already installed' not in jail_pkg_install.stdout"
+
+    # - name: Enable daemons in jails
+    #   ansible.builtin.command: "bastille sysrc {{ item.0.name }} {{ item.1 }}_enable=YES"
+    #   loop: "{{ jails | subelements('daemons', skip_missing=True) }}"
+
+###################################################
+# LDES SYSTEM ACCOUNT
+###################################################
+
+- name: Configure LDES system account
+  tags:
+    - ldes
+  block:
+    - name: Select LDES jail
+      ansible.builtin.set_fact:
+        ldes_jail: "{{ jails | selectattr('name', 'equalto', 'ldes-server') | first }}"
+
+    - name: Check if LDES group exists
+      ansible.builtin.command:
+        cmd: >-
+          bastille cmd {{ ldes_jail.name }}
+          pw groupshow {{ ldes_group }}
+      register: ldes_group_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create LDES group
+      ansible.builtin.command:
+        cmd: >-
+          bastille cmd {{ ldes_jail.name }}
+          pw groupadd {{ ldes_group }}
+      when:
+        - ldes_group_check.rc != 0
+
+    - name: Check if LDES user exists
+      ansible.builtin.command:
+        cmd: >-
+          bastille cmd {{ ldes_jail.name }}
+          pw usershow {{ ldes_user }}
+      register: ldes_user_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create LDES user
+      ansible.builtin.command:
+        cmd: >-
+          bastille cmd {{ ldes_jail.name }}
+          pw useradd {{ ldes_user }}
+          -g {{ ldes_group }}
+          -d {{ ldes_data_dir }}
+          -s /usr/sbin/nologin
+          -c "LDES Server"
+      when:
+        - ldes_user_check.rc != 0
+
+###################################################
+# LDES DIRECTORIES
+###################################################
+
+- name: Create LDES directories
+  tags:
+    - ldes
+  ansible.builtin.file:
+    path: >-
+      /usr/local/bastille/jails/{{ ldes_jail.name }}/root{{ item.path }}
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ ldes_install_dir }}"
+      owner: root
+      group: wheel
+      mode: "0755"
+
+    - path: "{{ ldes_config_dir }}"
+      owner: root
+      group: wheel
+      mode: "0755"
+
+    - path: "{{ ldes_data_dir }}"
+      owner: "{{ ldes_user }}"
+      group: "{{ ldes_group }}"
+      mode: "0750"
+
+    - path: "/usr/local/src"
+      owner: root
+      group: wheel
+      mode: "0755"
+
+    - path: "/var/run/ldes"
+      owner: "{{ ldes_user }}"
+      group: "{{ ldes_group }}"
+      mode: "0755"
+
+- name: Create LDES log file
+  ansible.builtin.file:
+    path: >-
+      /usr/local/bastille/jails/{{ ldes_jail.name }}/root/var/log/ldes.log
+    state: touch
+    owner: "{{ ldes_user }}"
+    group: "{{ ldes_group }}"
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve
+
+###################################################
+# VERIFY JAVA
+###################################################
+
+- name: Verify Java installation
+  tags:
+    - ldes
+  ansible.builtin.command:
+    cmd: >-
+      bastille cmd {{ ldes_jail.name }}
+      {{ ldes_java }} -version
+  register: java_version
+  changed_when: false
+
+- name: Display Java version
+  tags:
+    - ldes
+  ansible.builtin.debug:
+    var: java_version.stderr_lines
+
+###################################################
+# FETCH LDES SOURCES
+###################################################
+
+- name: Check if LDES source tree exists
+  tags:
+    - ldes
+    - build
+  ansible.builtin.stat:
+    path: >-
+      /usr/local/bastille/jails/{{ ldes_jail.name }}/root{{ ldes_source_dir }}/.git
+  register: ldes_git_directory
+
+- name: Clone LDES repository
+  tags:
+    - ldes
+    - build
+  ansible.builtin.command:
+    cmd: >-
+      bastille cmd {{ ldes_jail.name }}
+      git clone
+      {{ ldes_git_repository }}
+      {{ ldes_source_dir }}
+  when:
+    - not ldes_git_directory.stat.exists
+
+- name: Fetch LDES repository
+  tags:
+    - ldes
+    - build
+  ansible.builtin.command:
+    cmd: >-
+      bastille cmd {{ ldes_jail.name }}
+      git -C {{ ldes_source_dir }} fetch --tags --force
+  changed_when: false
+
+- name: Checkout selected LDES version
+  tags:
+    - ldes
+    - build
+  ansible.builtin.command:
+    cmd: >-
+      bastille cmd {{ ldes_jail.name }}
+      git -C {{ ldes_source_dir }}
+      checkout --force {{ ldes_git_ref }}
+  register: ldes_checkout
+  changed_when: >-
+    'Already on' not in ldes_checkout.stdout
+
+###################################################
+# BUILD LDES
+###################################################
+
+- name: Build LDES Server
+  tags:
+    - ldes
+    - build
+  ansible.builtin.command:
+    cmd: >-
+      bastille cmd {{ ldes_jail.name }}
+      sh -c
+      'cd {{ ldes_source_dir }} &&
+      JAVA_HOME=/usr/local/openjdk21
+      mvn clean install -DskipTests'
+  register: ldes_build
+  changed_when: true
+
+###################################################
+# LOCATE BUILT SPRING BOOT JAR
+###################################################
+
+- name: Find generated LDES application JAR
+  tags:
+    - lolo
+  ansible.builtin.command:
+    argv:
+      - bastille
+      - cmd
+      - "{{ ldes_jail.name }}"
+      - sh
+      - -c
+      - >-
+        find {{ ldes_source_dir }}/ldes-server-application/target
+        -maxdepth 1
+        -type f
+        -name '*.jar'
+        ! -name 'original-*'
+        -print
+        | head -n 1
+  register: ldes_built_jar
+  changed_when: false
+  failed_when: >-
+    ldes_built_jar.rc != 0
+    or
+    (ldes_built_jar.stdout | trim | length == 0)
+
+- name: Display generated LDES JAR
+  ansible.builtin.debug:
+    msg: "LDES JAR: {{ ldes_built_jar.stdout | trim }}"
+
+- name: Install LDES executable JAR
+  tags:
+    - lolo
+  ansible.builtin.command:
+    argv:
+      - bastille
+      - cmd
+      - "{{ ldes_jail.name }}"
+      - install
+      - -o
+      - root
+      - -g
+      - wheel
+      - -m
+      - "0644"
+      - "{{ ldes_built_jar.stdout | trim }}"
+      - "{{ ldes_jar }}"
+  # notify:
+  #   - Restart LDES
+
+##################################################
+# APPLICATION CONFIGURATION
+###################################################
+- name: Deploy LDES application.yml
+  tags:
+    - ldes
+    - config
+  ansible.builtin.template:
+    src: application.yml.j2
+    dest: >-
+      /usr/local/bastille/jails/{{ ldes_jail.name }}/root{{ ldes_config_dir }}/application.yml
+    owner: root
+    group: "{{ ldes_group }}"
+    mode: "0640"
+  # notify:
+  #   - Restart LDES
+
+###################################################
+# RC.D SERVICE
+###################################################
+- name: Install LDES rc.d service
+  tags:
+    - ldes
+  ansible.builtin.template:
+    src: ldes.rc.j2
+    dest: >-
+      /usr/local/bastille/jails/{{ ldes_jail.name }}/root/usr/local/etc/rc.d/ldes
+    owner: root
+    group: wheel
+    mode: "0755"
+  # notify:
+  #   - Restart LDES
+
+- name: Enable LDES service
+  tags:
+    - ldes
+  ansible.builtin.command:
+    cmd: >-
+      bastille sysrc {{ ldes_jail.name }}
+      ldes_enable=YES
+  register: ldes_enable
+  changed_when:
+    - "'ldes_enable: YES -> YES' not in ldes_enable.stdout"
+
+###################################################
+# PF CONFIGURATION
+###################################################
+
+- name: Configure PF
+  tags:
+    - pf
+  block:
+    - name: Deploy pf.conf
+      ansible.builtin.template:
+        src: pf.conf.j2
+        dest: /etc/pf.conf
+        owner: root
+        group: wheel
+        mode: "0644"
+      notify:
+        - Reload PF
+
+    - name: Check if PF kernel module is loaded
+      ansible.builtin.command:
+        cmd: kldstat -n pf
+      register: pf_loaded
+      failed_when: false
+      changed_when: false
+
+    - name: Load PF kernel module
+      ansible.builtin.command:
+        cmd: kldload pf
+      when:
+        - pf_loaded.rc != 0
+
+    - name: Enable PF at boot
+      community.general.sysrc:
+        name: pf_enable
+        value: "YES"
+
+    - name: Validate pf.conf
+      ansible.builtin.command:
+        cmd: pfctl -vnf /etc/pf.conf
+      changed_when: false
+
+    - name: Ensure PF is running
+      ansible.builtin.service:
+        name: pf
+        state: started
+
+###################################################
+# FLUSH HANDLERS BEFORE HEALTH CHECK
+###################################################
+
+# - name: Apply pending service changes
+#   ansible.builtin.meta: flush_handlers
+
+###################################################
+# START LDES
+###################################################
+
+- name: Ensure LDES service is running
+  tags:
+    - ldes
+  ansible.builtin.command:
+    cmd: >-
+      bastille cmd {{ ldes_jail.name }}
+      service ldes start
+  register: ldes_start
+  changed_when:
+    - "'Starting ldes' in ldes_start.stdout"
+  failed_when:
+    - ldes_start.rc != 0
+    - "'already running' not in ldes_start.stdout"
+
+###################################################
+# HEALTH CHECK
+###################################################
+
+- name: Wait for LDES HTTP endpoint
+  tags:
+    - ldes
+    - healthcheck
+  ansible.builtin.uri:
+    url: >-
+      http://{{ jails
+      | selectattr('name', 'equalto', ldes_jail.name)
+      | map(attribute='prefix')
+      | first }}.{{ jails
+      | selectattr('name', 'equalto', ldes_jail.name)
+      | map(attribute='octet')
+      | first }}:{{ ldes_port }}/actuator/health
+    method: GET
+    status_code: 200
+    return_content: true
+  register: ldes_health
+  retries: 20
+  delay: 5
+  until:
+    - ldes_health.status == 200
+
+- name: Display LDES health
+  ansible.builtin.debug:
+    var: ldes_health.json

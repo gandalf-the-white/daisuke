@@ -87,6 +87,7 @@ resource "local_file" "playbook" {
       hostname = var.server["server"].name
       prefix   = "${var.prefix}"
       admin-ip = "${var.adminip}"
+      postgres = "${var.postgres}"
       proxy    = var.proxy
       noproxy  = "${var.prefix}.0/24"
   })
@@ -94,16 +95,16 @@ resource "local_file" "playbook" {
   file_permission = "0644"
 }
 
-resource "null_resource" "play_ansible" {
-  provisioner "local-exec" {
-    command = "ansible-playbook -i ansible/inventory-ldes.yaml ansible/playbook-ldes.yaml"
-  }
-  depends_on = [
-    proxmox_vm_qemu.server,
-    local_file.inventory,
-    local_file.playbook
-  ]
-}
+# resource "null_resource" "play_ansible" {
+#   provisioner "local-exec" {
+#     command = "ansible-playbook -i ansible/inventory-ldes.yaml ansible/playbook-ldes.yaml"
+#   }
+#   depends_on = [
+#     proxmox_vm_qemu.server,
+#     local_file.inventory,
+#     local_file.playbook
+#   ]
+# }
 
 ####################################################################################
 ##  OUTPUT

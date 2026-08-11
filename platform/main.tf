@@ -59,6 +59,7 @@ module "ldes" {
   nameserver  = var.nameserver
   target_node = var.target_node
   clone       = "freebsd-150-tmpl"
+  postgres    = var.postgres["server"].octet
   size        = 30
   storage     = var.storage
   cloudinit   = var.cloudinit

@@ -1,3 +1,19 @@
 #SPDX-License-Identifier: MIT-0
 ---
 # handlers file for ansible/roles/ldes
+- name: Reload PF
+  ansible.builtin.command:
+    cmd: pfctl -f /etc/pf.conf
+  changed_when: true
+
+- name: Restart LDES
+  ansible.builtin.command:
+    argv:
+      - bastille
+      - cmd
+      - "{{ ldes_jail.name }}"
+      - service
+      - ldes
+      - onerestart
+  register: restart_ldes
+  changed_when: true

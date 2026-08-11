@@ -8,6 +8,7 @@
     prefix: "${prefix}"
     subnet: "${prefix}.0"
     admin_ip: "${admin-ip}"
+    postgres: "${prefix}.${postgres}"
     http_proxy: "${proxy}"
     https_proxy: "${proxy}"
     no_proxy: "${noproxy}"

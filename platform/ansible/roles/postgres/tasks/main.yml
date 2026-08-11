@@ -151,16 +151,18 @@
 #  SysV IPC CONFIGURATION
 ######################################
 
-- name: Allow SysV IPC in PostgreSQL jail
-  ansible.builtin.command: >-
-    bastille config postgres-server set allow.sysvipc 1
-  register: postgres_sysvipc
-  changed_when: "'allow.sysvipc' in postgres_sysvipc.stdout"
+- name: SysV IPC Configuration
+  block:
+    - name: Allow SysV IPC in PostgreSQL jail
+      ansible.builtin.command: >-
+        bastille config postgres-server set allow.sysvipc 1
+      register: postgres_sysvipc
+      changed_when: "'allow.sysvipc' in postgres_sysvipc.stdout"
 
-- name: Restart PostgreSQL jail after SysV IPC configuration
-  ansible.builtin.command: >-
-    bastille restart postgres-server
-  changed_when: true
+    - name: Restart PostgreSQL jail after SysV IPC configuration
+      ansible.builtin.command: >-
+        bastille restart postgres-server
+      changed_when: true
 
 ######################################
 # DAEMON CONFIGURATION
@@ -219,7 +221,6 @@
 ######################################
 
 - name: PostgreSQL configuration
-  tags: postgres
   block:
     - name: Select Postgres jail
       ansible.builtin.set_fact:
@@ -250,7 +251,8 @@
         path: "/usr/local/bastille/jails/{{ postgres_jail.name }}/root/var/db/postgres/data17/pg_hba.conf"
         marker: "# {mark} ANSIBLE MANAGED NETWORK ACCESS"
         block: |
-          host    all    all    {{ postgres_jail.prefix }}.0/24    scram-sha-256
+          host    all    all    {{ prefix }}.0/24    scram-sha-256
+          host    all    all    {{ admin_ip }}/32    scram-sha-256
 
     - name: Check PostgreSQL service status
       ansible.builtin.command: >-
@@ -278,3 +280,155 @@
     - name: Display PostgreSQL version
       ansible.builtin.debug:
         var: postgres_version.stdout
+
+######################################
+# POSTGRESQL CREDENTIALS
+######################################
+
+- name: PostgreSQL credentials
+  block:
+    - name: Check PostgreSQL application role
+      ansible.builtin.command:
+        argv:
+          - bastille
+          - cmd
+          - "{{ postgres_jail.name }}"
+          - su
+          - "-"
+          - postgres
+          - "-c"
+          - >-
+            psql -tAc "SELECT 1 FROM pg_roles
+            WHERE rolname='{{ postgres_user }}'"
+      register: postgres_user_exists
+      changed_when: false
+
+    - name: Create PostgreSQL application role
+      ansible.builtin.command:
+        argv:
+          - bastille
+          - cmd
+          - "{{ postgres_jail.name }}"
+          - su
+          - "-"
+          - postgres
+          - "-c"
+          - >-
+            psql -v ON_ERROR_STOP=1
+            -c "CREATE ROLE {{ postgres_user }}
+            LOGIN PASSWORD '{{ postgres_user_password }}';"
+      when: postgres_user_exists.stdout | trim != "1"
+      no_log: true
+
+    - name: Set PostgreSQL application role password
+      ansible.builtin.command:
+        argv:
+          - bastille
+          - cmd
+          - "{{ postgres_jail.name }}"
+          - su
+          - "-"
+          - postgres
+          - "-c"
+          - >-
+            psql -v ON_ERROR_STOP=1
+            -c "ALTER ROLE {{ postgres_user }}
+            WITH LOGIN PASSWORD '{{ postgres_user_password }}';"
+      no_log: true
+      changed_when: false
+
+    - name: Set PostgreSQL admin password
+      ansible.builtin.command:
+        argv:
+          - bastille
+          - cmd
+          - "{{ postgres_jail.name }}"
+          - su
+          - "-"
+          - postgres
+          - "-c"
+          - >-
+            psql -v ON_ERROR_STOP=1
+            -c "ALTER ROLE postgres
+            WITH PASSWORD '{{ postgres_admin_password }}';"
+      no_log: true
+      changed_when: false
+
+    - name: Check PostgreSQL database
+      ansible.builtin.command:
+        argv:
+          - bastille
+          - cmd
+          - "{{ postgres_jail.name }}"
+          - su
+          - "-"
+          - postgres
+          - "-c"
+          - >-
+            psql -tAc "SELECT 1 FROM pg_database
+            WHERE datname='{{ postgres_database }}'"
+      register: postgres_database_exists
+      changed_when: false
+
+    - name: Create PostgreSQL database
+      ansible.builtin.command:
+        argv:
+          - bastille
+          - cmd
+          - "{{ postgres_jail.name }}"
+          - su
+          - "-"
+          - postgres
+          - "-c"
+          - >-
+            createdb
+            --owner={{ postgres_user }}
+            {{ postgres_database }}
+      when: postgres_database_exists.stdout | trim != "1"
+
+######################################
+# POSTGRESQL CREDENTIALS
+######################################
+
+- name: Test Postgres Install
+  block:
+    - name: Verify PostgreSQL database
+      ansible.builtin.command:
+        argv:
+          - bastille
+          - cmd
+          - "{{ postgres_jail.name }}"
+          - su
+          - "-"
+          - postgres
+          - "-c"
+          - >-
+            psql -d {{ postgres_database }}
+            -tAc "SELECT current_database();"
+      register: postgres_database_test
+      changed_when: false
+
+    - name: Verify PostgreSQL database owner
+      ansible.builtin.command:
+        argv:
+          - bastille
+          - cmd
+          - "{{ postgres_jail.name }}"
+          - su
+          - "-"
+          - postgres
+          - "-c"
+          - >-
+            psql -tAc "SELECT pg_catalog.pg_get_userbyid(datdba)
+            FROM pg_database
+            WHERE datname='{{ postgres_database }}';"
+      register: postgres_database_owner
+      changed_when: false
+
+    - name: Assert PostgreSQL configuration
+      ansible.builtin.assert:
+        that:
+          - postgres_database_test.stdout | trim == postgres_database
+          - postgres_database_owner.stdout | trim == postgres_user
+        fail_msg: "PostgreSQL database initialization failed"
+        success_msg: "PostgreSQL database {{ postgres_database }} is ready"

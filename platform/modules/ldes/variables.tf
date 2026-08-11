@@ -15,3 +15,4 @@ variable "proxy" {}
 variable "noproxy" {}
 
 variable "adminip" {}
+variable "postgres" {}

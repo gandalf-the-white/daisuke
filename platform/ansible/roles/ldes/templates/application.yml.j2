@@ -1,0 +1,46 @@
+---
+spring:
+  datasource:
+    url: "jdbc:postgresql://{{ ldes_postgresql_host }}:{{ ldes_postgresql_port }}/{{ ldes_postgresql_database }}"
+    username: "{{ ldes_postgresql_user }}"
+    password: "{{ ldes_postgresql_password }}"
+
+  batch:
+    jdbc:
+      initialize-schema: always
+
+server:
+  port: {{ ldes_port }}
+
+ldes-server:
+
+  host-name: "{{ ldes_public_url }}"
+
+  ingest:
+    port: {{ ldes_port }}
+
+  fetch:
+    port: {{ ldes_port }}
+
+  admin:
+    port: {{ ldes_port }}
+
+rest:
+  max-age: 120
+  max-age-immutable: 604800
+
+springdoc:
+  swagger-ui:
+    path: /v1/swagger
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info
+
+  endpoint:
+    health:
+      show-details: when_authorized

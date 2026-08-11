@@ -69,8 +69,8 @@ variable "ldes" {
     server = {
       name    = "ldes"
       octet   = 103
-      memory  = 4096
-      cores   = 2
+      memory  = 8192
+      cores   = 4
       sockets = 1
     }
   }

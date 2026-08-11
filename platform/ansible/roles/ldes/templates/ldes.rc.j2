@@ -1,0 +1,56 @@
+#!/bin/sh
+
+# PROVIDE: ldes
+# REQUIRE: NETWORKING LOGIN
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="ldes"
+rcvar="ldes_enable"
+
+load_rc_config "${name}"
+
+: ${ldes_enable:="NO"}
+
+: ${ldes_user:="{{ ldes_user }}"}
+: ${ldes_group:="{{ ldes_group }}"}
+
+: ${ldes_java:="{{ ldes_java }}"}
+: ${ldes_jar:="{{ ldes_jar }}"}
+: ${ldes_config:="{{ ldes_config_dir }}/application.yml"}
+: ${ldes_java_opts:="{{ ldes_java_opts }}"}
+
+ldes_run_dir="/var/run/ldes"
+ldes_log="/var/log/ldes.log"
+
+pidfile="${ldes_run_dir}/ldes.pid"
+
+command="/usr/sbin/daemon"
+
+procname="${ldes_java}"
+
+command_args="-f -p ${pidfile} -o ${ldes_log} -m 3 ${ldes_java} ${ldes_java_opts} -Dspring.config.location=${ldes_config} -jar ${ldes_jar}"
+
+start_precmd="ldes_precmd"
+
+ldes_precmd() {
+	if [ ! -x "${ldes_java}" ]; then
+		echo "Java executable not found: ${ldes_java}"
+		return 1
+	fi
+
+	if [ ! -r "${ldes_jar}" ]; then
+		echo "LDES JAR not readable: ${ldes_jar}"
+		return 1
+	fi
+
+	if [ ! -r "${ldes_config}" ]; then
+		echo "LDES config not readable: ${ldes_config}"
+		return 1
+	fi
+
+	return 0
+}
+
+run_rc_command "$1"
