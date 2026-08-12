@@ -1,7 +1,7 @@
 #+title: Connection
 
 * Introduction
-This chapter explains the different interaction in the plateform. All instances are located in separate jails including in different virtual machines.
+This chapter describes the various interactions within the platform. All instances are hosted in separate “jails,” including in different virtual machines.
 
 * PostgreSQL
 ** Inside the jail
