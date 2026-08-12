@@ -73,9 +73,13 @@ Connection to 10.17.89.220 8080 port [tcp/http-alt] succeeded!
 fetch -qo - http://10.17.89.220:8080/actuator/health
 {"status":"UP"}
 #+end_src
+
+#+RESULTS:
+
 ** Postgres from LDES
 #+begin_src shell
 curl -s http://10.17.89.220:8080/v3/api-docs \
     | jq '.paths | keys'
 []
 #+end_src
+* Kafka

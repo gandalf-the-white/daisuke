@@ -1,5 +1,16 @@
 #+title: Readme
 
+* Introduction
+A smart platform capable of analyzing events with complex architecture, running on a BSD layer to reinforce the structure.
+* Architecture
+[[images/LDES-2026-08-10-1156.png]]
+* Installation
+Assuming the environment ready, we just have to run in the /plateform/ directory:
+#+begin_src shell
+terraform init
+terraform plan -out tfplan
+time terraform apply -auto-approve
+#+end_src
 * Proxmox
 ** Terraform Prerequisite
 The build script requires global environment variables.
